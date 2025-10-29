@@ -3,6 +3,8 @@ package org.example;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import okhttp3.*;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -10,29 +12,30 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.*;
+import java.util.Collections;
+import java.util.Properties;
 
 public class SentimentConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(SentimentConsumer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
-
-    private static final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .callTimeout(Duration.ofSeconds(60))
-            .build();
-
-    private static final String OPENAI_API_KEY = System.getenv("OPENAI_API_KEY");
-    private static final int BATCH_SIZE = 5; // number of messages to send per API call
+    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
     public static void main(String[] args) throws Exception {
         String bootstrap = Utils.getEnvOrConfig("kafka.bootstrap.servers", "localhost:9092");
+        String perplexityKey = Utils.getEnvOrConfig("perplexity.api.key", null);
         String esUrl = Utils.getEnvOrConfig("elasticsearch.url", "http://localhost:9200");
         String topic = "raw_topic";
 
+        if (perplexityKey == null || perplexityKey.isBlank()) {
+            log.error("Perplexity API key not set. Exiting.");
+            return;
+        }
+
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "sentiment-group");
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "sentiment-group-" + System.currentTimeMillis());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
@@ -41,117 +44,122 @@ public class SentimentConsumer {
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
         consumer.subscribe(Collections.singletonList(topic));
 
-        List<ConsumerRecord<String, String>> batch = new ArrayList<>();
+        OkHttpClient httpClient = new OkHttpClient();
+        log.info("SentimentConsumer started. Listening to Kafka topic: {}", topic);
 
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(1000));
             for (ConsumerRecord<String, String> record : records) {
-                batch.add(record);
-                if (batch.size() >= BATCH_SIZE) {
-                    processBatch(batch, esUrl);
-                    batch.clear();
+                String reviewJson = record.value();
+                String reviewText = extractReviewText(reviewJson);
+                int starRating = extractStarRating(reviewJson);
+
+                if (reviewText == null || reviewText.isBlank()) continue;
+
+                log.info("Sending full review with star rating {}: {}", starRating, reviewText);
+
+                // Build API request body
+                ObjectNode requestBody = MAPPER.createObjectNode();
+                requestBody.put("model", "sonar-pro");
+
+                ArrayNode messages = MAPPER.createArrayNode();
+                ObjectNode systemMessage = MAPPER.createObjectNode();
+                systemMessage.put("role", "system");
+                systemMessage.put("content", "You are a sentiment analysis assistant. Analyze the full review text and star rating, and return JSON as {sentiment: positive/neutral/negative, score: 0-1}.No other text or details");
+
+                ObjectNode userMessage = MAPPER.createObjectNode();
+                userMessage.put("role", "user");
+                userMessage.put("content", "Review text: " + reviewText.replace("\n", " ") + "\nStar rating: " + starRating);
+
+                messages.add(systemMessage);
+                messages.add(userMessage);
+                requestBody.set("messages", messages);
+
+                String jsonRequestBody = requestBody.toString();
+                RequestBody body = RequestBody.create(jsonRequestBody, JSON);
+
+                Request request = new Request.Builder()
+                        .url("https://api.perplexity.ai/chat/completions")
+                        .header("Authorization", "Bearer " + perplexityKey)
+                        .post(body)
+                        .build();
+
+                String finalSentiment = "unknown";
+                double score = 0.0;
+
+                try (Response response = httpClient.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        log.error("Perplexity API failed with status code: {}", response.code());
+                        log.error("Response message: {}", response.body() != null ? response.body().string() : "null");
+                    } else {
+                        String respString = response.body().string();
+                        JsonNode respJson = MAPPER.readTree(respString);
+                        String assistantText = "";
+                        if (respJson.has("choices") && respJson.get("choices").size() > 0) {
+                            JsonNode msg = respJson.get("choices").get(0).get("message");
+                            if (msg != null && msg.has("content")) assistantText = msg.get("content").asText();
+                        }
+                        try {
+                            JsonNode parsed = MAPPER.readTree(assistantText);
+                            if (parsed.has("sentiment")) finalSentiment = parsed.get("sentiment").asText("");
+                            if (parsed.has("score")) score = parsed.get("score").asDouble(0.0);
+                        } catch (Exception ex) {
+                            finalSentiment = assistantText.trim();
+                        }
+                        log.info("Perplexity API returned sentiment={} score={}", finalSentiment, score);
+                    }
+                } catch (Exception e) {
+                    log.error("Exception while calling Perplexity API", e);
                 }
-            }
-            if (!batch.isEmpty()) {
-                processBatch(batch, esUrl);
-                batch.clear();
+
+                // Push to Elasticsearch
+                ObjectNode doc = MAPPER.createObjectNode();
+                doc.put("review_text", reviewText);
+                doc.put("sentiment", finalSentiment);
+                doc.put("score", score);
+                doc.put("star_rating", starRating);
+                doc.put("kafka_partition", record.partition());
+                doc.put("kafka_offset", record.offset());
+                doc.put("timestamp", System.currentTimeMillis());
+
+                String docJson = doc.toString();
+                RequestBody esBody = RequestBody.create(docJson, JSON);
+                Request esRequest = new Request.Builder()
+                        .url(esUrl + "/yelp/_doc/" + record.offset())
+                        .post(esBody)
+                        .build();
+
+                try (Response esResp = httpClient.newCall(esRequest).execute()) {
+                    if (!esResp.isSuccessful()) {
+                        log.error("Elasticsearch push failed: {} {}", esResp.code(), esResp.body() != null ? esResp.body().string() : "null");
+                    } else {
+                        log.info("Indexed offset={} sentiment={} score={} star_rating={}",
+                                record.offset(), finalSentiment, score, starRating);
+                    }
+                } catch (Exception e) {
+                    log.error("Exception while pushing to Elasticsearch for offset={}", record.offset(), e);
+                }
             }
         }
     }
 
-    private static void processBatch(List<ConsumerRecord<String, String>> batch, String esUrl) {
+    private static String extractReviewText(String reviewJson) {
         try {
-            StringBuilder promptBuilder = new StringBuilder("Classify the sentiment (positive, neutral, negative) of the following reviews:\n");
-            Map<Integer, ConsumerRecord<String, String>> offsetMap = new HashMap<>();
-            int idx = 1;
-            for (ConsumerRecord<String, String> record : batch) {
-                JsonNode reviewNode = MAPPER.readTree(record.value());
-                String text = reviewNode.path("text").asText("");
-                if (text.isBlank()) continue;
-
-                promptBuilder.append(idx).append(". ").append(text).append("\n");
-                offsetMap.put(idx, record);
-                idx++;
-            }
-
-            String prompt = promptBuilder.toString();
-
-            JsonNode requestBody = MAPPER.createObjectNode()
-                    .put("model", "gpt-3.5-turbo")
-                    .putArray("messages")
-                    .add(MAPPER.createObjectNode()
-                            .put("role", "user")
-                            .put("content", prompt));
-
-            RequestBody body = RequestBody.create(MAPPER.writeValueAsBytes(requestBody), MediaType.get("application/json"));
-
-            Request request = new Request.Builder()
-                    .url("https://api.openai.com/v1/chat/completions")
-                    .header("Authorization", "Bearer " + OPENAI_API_KEY)
-                    .post(body)
-                    .build();
-
-            try (Response response = httpClient.newCall(request).execute()) {
-                if (!response.isSuccessful() || response.body() == null) {
-                    log.warn("OpenAI API failed: {}", response);
-                    return;
-                }
-
-                String respString = response.body().string();
-                JsonNode respJson = MAPPER.readTree(respString);
-                String content = respJson.path("choices").get(0).path("message").path("content").asText();
-
-                // Split results by line (assuming model responds 1:1 in order)
-                String[] lines = content.split("\\n");
-                for (String line : lines) {
-                    line = line.toLowerCase();
-                    int dotIdx = line.indexOf(".");
-                    if (dotIdx > 0) {
-                        try {
-                            int reviewNum = Integer.parseInt(line.substring(0, dotIdx).trim());
-                            String sentiment = line.substring(dotIdx + 1).trim();
-                            if (sentiment.contains("positive")) sentiment = "positive";
-                            else if (sentiment.contains("negative")) sentiment = "negative";
-                            else sentiment = "neutral";
-
-                            ConsumerRecord<String, String> record = offsetMap.get(reviewNum);
-                            JsonNode reviewNode = MAPPER.readTree(record.value());
-                            String reviewText = reviewNode.path("text").asText("");
-                            int stars = reviewNode.path("stars").asInt(0);
-                            double score = sentiment.equals("positive") ? 0.9 :
-                                    sentiment.equals("neutral") ? 0.5 : 0.2;
-
-                            // Save to Elasticsearch
-                            JsonNode doc = MAPPER.createObjectNode()
-                                    .put("review_text", reviewText)
-                                    .put("stars", stars)
-                                    .put("sentiment", sentiment)
-                                    .put("score", score)
-                                    .put("kafka_partition", record.partition())
-                                    .put("kafka_offset", record.offset())
-                                    .put("timestamp", System.currentTimeMillis());
-
-                            RequestBody esBody = RequestBody.create(MAPPER.writeValueAsBytes(doc), MediaType.get("application/json"));
-                            Request esReq = new Request.Builder()
-                                    .url(esUrl + "/yelp/_doc")
-                                    .post(esBody)
-                                    .build();
-
-                            try (Response esResp = httpClient.newCall(esReq).execute()) {
-                                if (!esResp.isSuccessful()) {
-                                    log.error("ES push failed: {} {}", esResp.code(), esResp.body().string());
-                                }
-                            }
-
-                            log.info("Processed review offset={} sentiment={} score={}", record.offset(), sentiment, score);
-                        } catch (NumberFormatException ignored) {}
-                    }
-                }
-
-            }
-
+            JsonNode n = MAPPER.readTree(reviewJson);
+            if (n.has("text")) return n.get("text").asText("");
+            return reviewJson;
         } catch (Exception e) {
-            log.error("Error processing batch", e);
+            return reviewJson;
         }
+    }
+
+    private static int extractStarRating(String reviewJson) {
+        try {
+            JsonNode n = MAPPER.readTree(reviewJson);
+            if (n.has("stars")) return n.get("stars").asInt(0);
+        } catch (Exception e) {
+            // ignore
+        }
+        return 0;
     }
 }
