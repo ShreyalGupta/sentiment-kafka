@@ -31,5 +31,7 @@ public class KafkaProducerService {
         producer.send(new ProducerRecord<>(topic, null, message));
     }
 
-    public void close() { producer.close(); }
+    public void close() {
+        producer.close();
+    }
 }

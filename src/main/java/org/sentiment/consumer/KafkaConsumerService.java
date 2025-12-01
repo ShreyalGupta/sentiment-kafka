@@ -28,6 +28,8 @@ public class KafkaConsumerService {
         return consumer.poll(Duration.ofMillis(timeoutMs));
     }
 
-    public void close() { consumer.close(); }
+    public void close() {
+        consumer.close();
+    }
 }
 

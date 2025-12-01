@@ -14,7 +14,9 @@ public class ElasticSearchService {
     private final OkHttpClient client = new OkHttpClient();
     private final String esUrl;
 
-    public ElasticSearchService(String esUrl) { this.esUrl = esUrl; }
+    public ElasticSearchService(String esUrl) {
+        this.esUrl = esUrl;
+    }
 
     public void indexReview(long id, Review review, SentimentResult sentiment) throws IOException {
         ObjectNode doc = MAPPER.createObjectNode();
