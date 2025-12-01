@@ -1,4 +1,4 @@
-package org.sentiment.model;
+package org.example.model;
 
 public class Review {
     private String text;

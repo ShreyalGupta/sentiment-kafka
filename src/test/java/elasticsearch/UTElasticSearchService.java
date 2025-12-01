@@ -1,9 +1,9 @@
 package elasticsearch;
 
 
-import org.sentiment.elasticsearch.ElasticSearchService;
-import org.sentiment.model.Review;
-import org.sentiment.model.SentimentResult;
+import org.example.elasticsearch.ElasticSearchService;
+import org.example.model.Review;
+import org.example.model.SentimentResult;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 

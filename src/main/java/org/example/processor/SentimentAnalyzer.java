@@ -1,12 +1,12 @@
-package org.sentiment.processor;
+package org.example.processor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import okhttp3.*;
-import org.sentiment.model.Review;
-import org.sentiment.model.SentimentResult;
+import org.example.model.Review;
+import org.example.model.SentimentResult;
 
 import java.io.IOException;
 

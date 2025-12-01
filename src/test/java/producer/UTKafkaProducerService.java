@@ -1,6 +1,6 @@
 package producer;
 
-import org.sentiment.producer.KafkaProducerService;
+import org.example.producer.KafkaProducerService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.apache.kafka.clients.producer.KafkaProducer;

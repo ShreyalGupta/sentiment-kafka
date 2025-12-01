@@ -1,9 +1,9 @@
 package processor;
 
 
-import org.sentiment.model.Review;
-import org.sentiment.model.SentimentResult;
-import org.sentiment.processor.SentimentAnalyzer;
+import org.example.model.Review;
+import org.example.model.SentimentResult;
+import org.example.processor.SentimentAnalyzer;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;

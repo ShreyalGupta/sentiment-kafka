@@ -2,7 +2,7 @@ package consumer;
 
 
 import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.sentiment.consumer.KafkaConsumerService;
+import org.example.consumer.KafkaConsumerService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;

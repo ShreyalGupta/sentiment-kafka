@@ -1,8 +1,8 @@
-package org.sentiment.processor;
+package org.example.processor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.sentiment.model.Review;
+import org.example.model.Review;
 
 public class ReviewParser {
 

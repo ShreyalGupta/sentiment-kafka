@@ -1,4 +1,4 @@
-package org.sentiment.producer;
+package org.example.producer;
 
 import org.apache.kafka.clients.producer.*;
 import org.apache.kafka.common.serialization.StringSerializer;
