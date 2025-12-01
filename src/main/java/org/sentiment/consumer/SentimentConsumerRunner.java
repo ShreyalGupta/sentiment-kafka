@@ -1,11 +1,10 @@
-package org.example.consumer;
+package org.sentiment.consumer;
 
 
-import org.example.consumer.KafkaConsumerService;
-import org.example.model.Review;
-import org.example.model.SentimentResult;
-import org.example.processor.*;
-import org.example.elasticsearch.ElasticSearchService;
+import org.sentiment.model.Review;
+import org.sentiment.model.SentimentResult;
+import org.sentiment.processor.*;
+import org.sentiment.elasticsearch.ElasticSearchService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 

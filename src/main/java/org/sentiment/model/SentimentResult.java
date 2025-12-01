@@ -1,3 +1,3 @@
-package org.example.model;
+package org.sentiment.model;
 
 public record SentimentResult(String sentiment, double score) {}

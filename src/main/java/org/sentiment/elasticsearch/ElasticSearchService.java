@@ -1,8 +1,8 @@
-package org.example.elasticsearch;
+package org.sentiment.elasticsearch;
 
 import okhttp3.*;
-import org.example.model.Review;
-import org.example.model.SentimentResult;
+import org.sentiment.model.Review;
+import org.sentiment.model.SentimentResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 

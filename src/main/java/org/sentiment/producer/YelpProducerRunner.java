@@ -1,4 +1,4 @@
-package org.example.producer;
+package org.sentiment.producer;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
